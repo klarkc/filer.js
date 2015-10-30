@@ -34,6 +34,26 @@ var errors = document.querySelector('#errors');
 var importButton = document.querySelector('[type="file"]');
 var createButton = document.querySelector('#createButton');
 var ticker = document.querySelector('#ticker');
+var query = function() {
+  var query_string = {};
+  var query = window.location.search.substring(1);
+  var vars = query.split("&");
+  for (var i=0;i<vars.length;i++) {
+    var pair = vars[i].split("=");
+        // If first entry with this name
+    if (typeof query_string[pair[0]] === "undefined") {
+      query_string[pair[0]] = decodeURIComponent(pair[1]);
+        // If second entry with this name
+    } else if (typeof query_string[pair[0]] === "string") {
+      var arr = [ query_string[pair[0]],decodeURIComponent(pair[1]) ];
+      query_string[pair[0]] = arr;
+        // If third or later entry with this name
+    } else {
+      query_string[pair[0]].push(decodeURIComponent(pair[1]));
+    }
+  }
+  return query_string;
+}();
 
 function createNewEntry() {
   var type = document.querySelector('#entry-type').value;
@@ -53,14 +73,14 @@ function onError(e) {
   errors.textContent = e.name;
 }
 
-function refreshFolder(e) {
+function refreshFolder(path) {
   errors.textContent = ''; // Reset errors.
 
   // Open the FS, otherwise list the files.
   if (filer && !filer.isOpen) {
     openFS();
   } else {
-    filer.ls('.', function(entries) {
+    filer.ls(path || '.', function(entries) {
       renderEntries(entries);
     }, onError);
   }
@@ -119,6 +139,8 @@ function constructEntryHTML(entry, i) {
     html.push('<a href="', entry.toURL(), '" download><img src="images/icons/download.png" class="icon" title="Download" alt="Download"></a>');
   }
 
+  html.push('<a href="', entry.toURL(), '" compress onclick="return compress(', i, ')"><img src="images/icons/zip.png" class="icon" title="Compress and Download" alt="Compress and Download"></a>');
+
   html.push('<a href="javascript:" data-remove-link onclick="removeEntry(this,', i, ');"><img src="images/icons/trash_empty.png" class="icon" title="Remove" alt="Remove"></a>');
 
   return html.join('');
@@ -172,19 +194,33 @@ function showUsage() {
   }, onError);
 }
 
-function openFS() {
+function openFS(path) {
   try {
     filer.init({persistent: true, size: 1024 * 1024}, function(fs) {
-      logger.log(fs.root.toURL());
+      var fsURL = fs.root.toURL();
+      logger.log(fsURL);
       logger.log('<p>Opened: ' + fs.name, + '</p>');
 
-      setCwd('/'); // Display current path as root.
-      refreshFolder();
+      if (query.path) {
+          path = query.path;
+          logger.log('<p>Loaded path ' + path +' from URL</p>')
+      } else if(typeof path === 'undefined') {
+          path = '/';
+      }
+
+      setCwd(path); // Display current path as root.
+      refreshFolder(path);
       openFsButton.innerHTML = '<div></div>';
       openFsButton.classList.add('fakebutton');
       importButton.disabled = false;
       createButton.disabled = false;
       showUsage();
+
+      // Check argument for a directory
+      if (query.directory) {
+          logger.log("Loading directory: " + query.directory);
+          cd(fsURL + query.directory);
+      }
     }, function(e) {
       if (e.name == 'SECURITY_ERR') {
         errors.textContent = 'SECURITY_ERR: Are you running in incognito mode?';
@@ -332,6 +368,76 @@ function copy(el, i) {
     entries[i] = entry;
   });
   toggleContentEditable(el);
+}
+
+function zipFile(zip, file) {
+    // Add node to the zip file
+    filer.open(file, function(fs_file) {
+        Util.fileToArrayBuffer(fs_file, function(arrayBuffer) {
+            zip = zip.file(file.name, arrayBuffer, {
+                date: file.lastModifiedDate,
+                createFolders: true
+            });
+            logger.log('<p>[ZIP] File added: ' + file.name + '</p>');
+        });
+    }, onError);
+}
+
+function zipDirectory(zip, dir, callback, count) {
+    console.debug('Directory count: '+count);
+    zip.folder(dir.name);
+    logger.log('<p>[ZIP] Folder created: ' + dir.name + '</p>');
+
+    // List all entries of given directory, and foreach recursive call this function
+    filer.ls(dir, function(entries){
+        entries.forEach(function(entry){
+            count++;
+            zipEntry(zip, entry, callback, count);
+        });
+    }, onError);
+}
+
+function zipEntry(zip, entry, callback, count) {
+    console.debug('Entry count: '+count);
+    if (entry.isFile) {
+        zipFile(zip, entry);
+    } else {
+        zipDirectory(zip, entry, callback, count);
+        count--;
+    }
+    if (callback && count == 0)
+        callback(zip);
+}
+
+function compress(i) {
+    var entry = entries[i];
+    var zip = new JSZip();
+
+    if (entry.isDirectory) {
+        // Compress directory
+        logger.log('<p>Compressing directory: ' + entry.fullPath + '</p>');
+        zipEntry(zip, entry, function(fzip){
+            console.debug(Object.keys(fzip.files));
+        }, 0);
+        setTimeout(function(){
+            console.debug(Object.keys(zip.files));
+        }, 5000);
+    } else {
+        // Compress file
+        logger.log('<p>Compressing file: ' + entry.fullPath + '</p>');
+        filer.open(entry, function(file) {
+            Util.fileToArrayBuffer(file, function(arrayBuffer) {
+                zip.file(file.name, arrayBuffer, {
+                    date: file.lastModifiedDate
+                });
+                var ext = Util.getFileExtension(file.name);
+                var content = zip.generate({type: "blob"});
+                var name = file.name.replace(ext, '.zip');
+                saveAs(content, name);
+            });
+        }, onError);
+    }
+    return false; // prevendDefault
 }
 
 function readFile(i) {

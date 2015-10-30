@@ -31,6 +31,8 @@ Author: Eric Bidelman (ebidel@gmail.com)
 HTML5 tech used:
 - Filesystem API
 - DnD: File drag-in and out, folder drag in (DataTransferItem.webkitGetAsEntry()).
+- JSZip: Create, read and edit .zip files with Javascript http://stuartk.com/jszip
+- FileSaver.js: An HTML5 saveAs() FileSaver implementation http://eligrey.com/blog/post/saving-generated-files-on-the-client-side
 - <input type="file" webkitdirectory>
 - a[download] attribute
 - contenteditable
@@ -90,6 +92,8 @@ Other:
 <script src="../src/filer.min.js?2013-06-12" defer></script>
 <script src="js/logger.js" defer></script>
 <script src="js/dnd.js" defer></script>
+<script src="js/jszip.min.js" defer></script>
+<script src="js/FileSaver.min.js" defer></script>
 <script src="js/app.js?2013-06-12" onload="openFS()" defer></script>
 <script>
 var _gaq = _gaq || [];
