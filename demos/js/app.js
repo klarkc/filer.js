@@ -196,7 +196,7 @@ function showUsage() {
 
 function openFS(path) {
   try {
-    filer.init({persistent: true, size: 1024 * 1024}, function(fs) {
+    filer.init({persistent: true, size: 1024 * 1024 * 100}, function(fs) {
       var fsURL = fs.root.toURL();
       logger.log(fsURL);
       logger.log('<p>Opened: ' + fs.name, + '</p>');
