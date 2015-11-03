@@ -370,73 +370,104 @@ function copy(el, i) {
   toggleContentEditable(el);
 }
 
-function zipFile(zip, file) {
-    // Add node to the zip file
-    filer.open(file, function(fs_file) {
-        Util.fileToArrayBuffer(fs_file, function(arrayBuffer) {
-            zip = zip.file(file.name, arrayBuffer, {
-                date: file.lastModifiedDate,
-                createFolders: true
-            });
-            logger.log('<p>[ZIP] File added: ' + file.name + '</p>');
-        });
-    }, onError);
+function zipTempRm(entry, callback) {
+    // Remove source file
+    filer.rm(entry, function(){
+        // logger.log('<p>[ZIP] Temporary file/folder removed: ' + entry.fullPath + '</p>');
+        // Next entry
+        if(typeof callback === 'function') callback();
+    });
 }
 
-function zipDirectory(zip, dir, callback, count) {
-    console.debug('Directory count: '+count);
-    zip.folder(dir.name);
-    logger.log('<p>[ZIP] Folder created: ' + dir.name + '</p>');
-
-    // List all entries of given directory, and foreach recursive call this function
-    filer.ls(dir, function(entries){
-        entries.forEach(function(entry){
-            count++;
-            zipEntry(zip, entry, callback, count);
-        });
-    }, onError);
-}
-
-function zipEntry(zip, entry, callback, count) {
-    console.debug('Entry count: '+count);
-    if (entry.isFile) {
-        zipFile(zip, entry);
+function zipPath(root, entry){
+    if(root) {
+        return entry.fullPath.replace(root.fullPath, '');
     } else {
-        zipDirectory(zip, entry, callback, count);
-        count--;
+        return entry.fullPath;
     }
-    if (callback && count == 0)
-        callback(zip);
+};
+
+function zipSave(zip, entry) {
+    var content = zip.generate({type: "blob"});
+    var ext = Util.getFileExtension(entry.name);
+    var name = entry.name;
+    if (ext) {
+        name = entry.name.replace(ext, '.zip');
+    }
+    logger.log('<p>[ZIP] Downloading file: ' + name + '</p>');
+    saveAs(content, name);
 }
 
-function compress(i) {
-    var entry = entries[i];
-    var zip = new JSZip();
+function zipEntry(zip, entry, callback, root) {
+    // Callback if we are at root (and root is defined)
+    if (typeof root !== 'undefined' && typeof entry !== 'undefined') {
+        if (root.fullPath === entry.fullPath) {
+            callback(zip, entry);
+            return;
+        }
+    }
 
-    if (entry.isDirectory) {
-        // Compress directory
-        logger.log('<p>Compressing directory: ' + entry.fullPath + '</p>');
-        zipEntry(zip, entry, function(fzip){
-            console.debug(Object.keys(fzip.files));
-        }, 0);
-        setTimeout(function(){
-            console.debug(Object.keys(zip.files));
-        }, 5000);
-    } else {
-        // Compress file
-        logger.log('<p>Compressing file: ' + entry.fullPath + '</p>');
-        filer.open(entry, function(file) {
-            Util.fileToArrayBuffer(file, function(arrayBuffer) {
-                zip.file(file.name, arrayBuffer, {
-                    date: file.lastModifiedDate
+    if (entry.isFile) {
+        // Add entry to the zip file
+        filer.open(entry, function(fs_file) {
+            Util.fileToArrayBuffer(fs_file, function(arrayBuffer) {
+                zip.file(entry.name, arrayBuffer, {
+                    date: entry.lastModifiedDate,
+                    createFolders: false
                 });
-                var ext = Util.getFileExtension(file.name);
-                var content = zip.generate({type: "blob"});
-                var name = file.name.replace(ext, '.zip');
-                saveAs(content, name);
+                logger.log('<p>[ZIP] File added: ' + zipPath(root, entry) + '</p>');
+
+                // Remove source file
+                zipTempRm(entry, callback);
             });
         }, onError);
+    } else {
+        // Store root variable
+        if (typeof root === 'undefined') root = entry;
+
+        // Create an folder in zip if i
+        var subzip = zip.folder(entry.name);
+
+        // List current directory and process each entry
+        filer.ls(entry, function(entries){
+            if(entries.length > 0) {
+                async.eachSeries(entries, function(subentry, next){
+                    // Execute for each subdirectory item listing synchronous
+                    zipEntry(subzip, subentry, next, root);
+                }, function(){
+                    // Execute for entry again (each execute removes an folder or file from tmp dir)
+                    zipEntry(zip, entry, callback, root);
+                });
+            } else {
+                // Remove source folder and call callback
+                zipTempRm(entry, callback);
+            }
+        }, onError);
     }
+}
+
+function compress(index) {
+    var entry = entries[index];
+    logger.log('<p>[ZIP] Creating file for ' + entry.fullPath + '</p>');
+
+    // Store current dir
+    cur = filer.cwd;
+
+    // Create a tmp folder to work on that
+    filer.mkdir('.ziptmp', false, function(dir){
+        // Copy entry dir to tmp folder
+        filer.cp(entry, dir, null, function(tmp_entry){
+            var zip = new JSZip();
+            logger.log('<p>[ZIP] Temporary path is ' + tmp_entry.fullPath + '</p>');
+            zipEntry(zip, tmp_entry, function(){
+                zipSave(zip, entry); // Save zip
+                filer.rm(dir, function(){
+                    logger.log('<p>[ZIP] Temporary folder ' + dir.fullPath + ' removed</p>');
+                }); // Remove temp folder
+                filer.cd(cur); // Back to the backed dir
+            });
+        }, onError) ;
+    }, onError);
     return false; // prevendDefault
 }
 
